@@ -147,6 +147,7 @@ struct wiimote_data {
 	struct input_dev *mp;
 	struct timer_list timer;
 	struct wiimote_debug *debug;
+	struct wiimote_speaker *speaker;
 
 	union {
 		struct input_dev *input;
@@ -171,6 +172,7 @@ enum wiimod_module {
 	WIIMOD_IR,
 	WIIMOD_BUILTIN_MP,
 	WIIMOD_NO_MP,
+	WIIMOD_SPEAKER,
 	WIIMOD_NUM,
 	WIIMOD_NULL = WIIMOD_NUM,
 };
@@ -207,9 +209,12 @@ enum wiiproto_reqs {
 	WIIPROTO_REQ_LED = 0x11,
 	WIIPROTO_REQ_DRM = 0x12,
 	WIIPROTO_REQ_IR1 = 0x13,
+	WIIPROTO_REQ_SPEAKER = 0x14,
 	WIIPROTO_REQ_SREQ = 0x15,
 	WIIPROTO_REQ_WMEM = 0x16,
 	WIIPROTO_REQ_RMEM = 0x17,
+	WIIPROTO_REQ_AUDIO = 0x18,
+	WIIPROTO_REQ_MUTE = 0x19,
 	WIIPROTO_REQ_IR2 = 0x1a,
 	WIIPROTO_REQ_STATUS = 0x20,
 	WIIPROTO_REQ_DATA = 0x21,
@@ -263,6 +268,11 @@ extern void wiiproto_req_status(struct wiimote_data *wdata);
 extern void wiiproto_req_accel(struct wiimote_data *wdata, __u8 accel);
 extern void wiiproto_req_ir1(struct wiimote_data *wdata, __u8 flags);
 extern void wiiproto_req_ir2(struct wiimote_data *wdata, __u8 flags);
+extern void wiiproto_req_wmem(struct wiimote_data *wdata, bool eeprom,
+			      __u32 offset, const __u8 *buf, __u8 size);
+extern void wiiproto_req_speaker(struct wiimote_data *wdata, bool on);
+extern void wiiproto_req_mute(struct wiimote_data *wdata, bool on);
+extern void wiiproto_req_audio(struct wiimote_data *wdata, __u8 *cmd, __u8 len);
 extern int wiimote_cmd_write(struct wiimote_data *wdata, __u32 offset,
 						const __u8 *wmem, __u8 size);
 extern ssize_t wiimote_cmd_read(struct wiimote_data *wdata, __u32 offset,
@@ -284,6 +294,12 @@ extern void wiidebug_deinit(struct wiimote_data *wdata);
 
 static inline int wiidebug_init(void *u) { return 0; }
 static inline void wiidebug_deinit(void *u) { }
+
+#endif
+
+#ifdef CONFIG_SND
+
+extern const struct wiimod_ops wiimod_speaker;
 
 #endif
 

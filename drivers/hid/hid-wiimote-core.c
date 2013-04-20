@@ -311,8 +311,8 @@ void wiiproto_req_ir2(struct wiimote_data *wdata, __u8 flags)
 #define wiiproto_req_weeprom(wdata, os, buf, sz) \
 			wiiproto_req_wmem((wdata), true, (os), (buf), (sz))
 
-static void wiiproto_req_wmem(struct wiimote_data *wdata, bool eeprom,
-				__u32 offset, const __u8 *buf, __u8 size)
+void wiiproto_req_wmem(struct wiimote_data *wdata, bool eeprom,
+		       __u32 offset, const __u8 *buf, __u8 size)
 {
 	__u8 cmd[22];
 
@@ -359,6 +359,43 @@ void wiiproto_req_rmem(struct wiimote_data *wdata, bool eeprom, __u32 offset,
 
 	wiiproto_keep_rumble(wdata, &cmd[1]);
 	wiimote_queue(wdata, cmd, sizeof(cmd));
+}
+
+void wiiproto_req_speaker(struct wiimote_data *wdata, bool on)
+{
+	__u8 cmd[2];
+
+	cmd[0] = WIIPROTO_REQ_SPEAKER;
+	cmd[1] = on ? 0x04 : 0x00;
+
+	wiiproto_keep_rumble(wdata, &cmd[1]);
+	wiimote_queue(wdata, cmd, sizeof(cmd));
+}
+
+void wiiproto_req_mute(struct wiimote_data *wdata, bool on)
+{
+	__u8 cmd[2];
+
+	cmd[0] = WIIPROTO_REQ_MUTE;
+	cmd[1] = on ? 0x04 : 0x00;
+
+	wiiproto_keep_rumble(wdata, &cmd[1]);
+	wiimote_queue(wdata, cmd, sizeof(cmd));
+}
+
+void wiiproto_req_audio(struct wiimote_data *wdata, __u8 *cmd, __u8 len)
+{
+	if (len > 20)
+		len = 20;
+
+	cmd[0] = WIIPROTO_REQ_AUDIO;
+	cmd[1] = len << 3;
+
+	for ( ; len < 20; ++len)
+		cmd[len + 2] = 0;
+
+	wiiproto_keep_rumble(wdata, &cmd[1]);
+	wiimote_queue(wdata, cmd, 22);
 }
 
 /* requries the cmd-mutex to be held */
@@ -572,6 +609,7 @@ static const __u8 * const wiimote_devtype_mods[WIIMOTE_DEV_NUM] = {
 		WIIMOD_LED4,
 		WIIMOD_ACCEL,
 		WIIMOD_IR,
+		WIIMOD_SPEAKER,
 		WIIMOD_NULL,
 	},
 	[WIIMOTE_DEV_GEN10] = (const __u8[]){
@@ -584,6 +622,7 @@ static const __u8 * const wiimote_devtype_mods[WIIMOTE_DEV_NUM] = {
 		WIIMOD_LED4,
 		WIIMOD_ACCEL,
 		WIIMOD_IR,
+		WIIMOD_SPEAKER,
 		WIIMOD_NULL,
 	},
 	[WIIMOTE_DEV_GEN20] = (const __u8[]){
@@ -597,6 +636,7 @@ static const __u8 * const wiimote_devtype_mods[WIIMOTE_DEV_NUM] = {
 		WIIMOD_ACCEL,
 		WIIMOD_IR,
 		WIIMOD_BUILTIN_MP,
+		WIIMOD_SPEAKER,
 		WIIMOD_NULL,
 	},
 	[WIIMOTE_DEV_BALANCE_BOARD] = (const __u8[]) {
@@ -1479,6 +1519,13 @@ static void handler_return(struct wiimote_data *wdata, const __u8 *payload)
 	if (wiimote_cmd_pending(wdata, cmd, 0)) {
 		wdata->state.cmd_err = err;
 		wiimote_cmd_complete(wdata);
+	} else if (cmd == WIIPROTO_REQ_AUDIO && err == 4) {
+		/* If we stream audio data too fast, we get overrun errors
+		 * from the device. However, on audio-period bounds,
+		 * we have a very hard time sending audio at the exact rate
+		 * as we have no control over the bluetooth l2cap IRQs.
+		 * Hence, drop any overrun errors. */
+		hid_dbg(wdata->hdev, "audio overrun error\n");
 	} else if (err) {
 		hid_warn(wdata->hdev, "Remote error %hhu on req %hhu\n", err,
 									cmd);

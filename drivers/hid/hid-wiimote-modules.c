@@ -2074,6 +2074,11 @@ const struct wiimod_ops *wiimod_table[WIIMOD_NUM] = {
 	[WIIMOD_IR] = &wiimod_ir,
 	[WIIMOD_BUILTIN_MP] = &wiimod_builtin_mp,
 	[WIIMOD_NO_MP] = &wiimod_no_mp,
+#ifdef CONFIG_SND
+	[WIIMOD_SPEAKER] = &wiimod_speaker,
+#else
+	[WIIMOD_SPEAKER] = &wiimod_dummy,
+#endif
 };
 
 const struct wiimod_ops *wiimod_ext_table[WIIMOTE_EXT_NUM] = {

@@ -722,6 +722,7 @@ config HID_WIIMOTE
 	tristate "Nintendo Wii / Wii U peripherals"
 	depends on HID
 	depends on LEDS_CLASS
+	depends on !SND || HIGH_RES_TIMERS
 	select POWER_SUPPLY
 	select INPUT_FF_MEMLESS
 	---help---
@@ -737,6 +738,9 @@ config HID_WIIMOTE
 	Other Nintendo Wii U peripherals that are IEEE 802.11 based (including
 	the Wii U Gamepad) might be supported in the future. But currently
 	support is limited to Bluetooth based devices.
+
+	If Alsa sound support (CONFIG_SND) is enabled, this driver also provides
+	a sound card interface for Wii Remote speakers.
 
 	If unsure, say N.
 
