@@ -1,0 +1,18 @@
+config DRM_SIMPLEDRM
+	tristate "Simple firmware framebuffer DRM driver"
+	depends on DRM && (FB_SIMPLE = n)
+	help
+	  SimpleDRM can run on all systems with pre-initialized graphics
+	  hardware. It uses a framebuffer that was initialized during
+	  firmware boot. No page-flipping, modesetting or other advanced
+	  features are available. However, other DRM drivers can be loaded
+	  later and take over from SimpleDRM if they provide real hardware
+	  support.
+
+	  SimpleDRM supports "simple-framebuffer" DeviceTree objects and
+	  compatible platform framebuffers.
+
+	  If unsure, say Y.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called simpledrm.
