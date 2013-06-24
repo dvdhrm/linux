@@ -252,13 +252,11 @@ nouveau_accel_init(struct nouveau_drm *drm)
 	nouveau_bo_move_init(drm);
 }
 
-static int nouveau_drm_probe(struct pci_dev *pdev,
-			     const struct pci_device_id *pent)
+static int nouveau_kick_out_firmware(struct drm_device *dev)
 {
-	struct nouveau_device *device;
 	struct apertures_struct *aper;
 	bool boot = false;
-	int ret;
+	struct pci_dev *pdev = dev->pdev;
 
 	/* remove conflicting drivers (vesafb, efifb etc) */
 	aper = alloc_apertures(3);
@@ -284,8 +282,18 @@ static int nouveau_drm_probe(struct pci_dev *pdev,
 #ifdef CONFIG_X86
 	boot = pdev->resource[PCI_ROM_RESOURCE].flags & IORESOURCE_ROM_SHADOW;
 #endif
-	remove_conflicting_framebuffers(aper, "nouveaufb", boot);
-	kfree(aper);
+
+	drm_kick_out_firmware(aper, boot);
+	dev->apertures = aper;
+	dev->apert_boot = boot;
+	return 0;
+}
+
+static int nouveau_drm_probe(struct pci_dev *pdev,
+			     const struct pci_device_id *pent)
+{
+	struct nouveau_device *device;
+	int ret;
 
 	ret = nouveau_device_create(pdev, nouveau_name(pdev), pci_name(pdev),
 				    nouveau_config, nouveau_debug, &device);
@@ -336,9 +344,13 @@ nouveau_drm_load(struct drm_device *dev, unsigned long flags)
 	struct nouveau_drm *drm;
 	int ret;
 
-	ret = nouveau_cli_create(pdev, "DRM", sizeof(*drm), (void**)&drm);
+	ret = nouveau_kick_out_firmware(dev);
 	if (ret)
 		return ret;
+
+	ret = nouveau_cli_create(pdev, "DRM", sizeof(*drm), (void**)&drm);
+	if (ret)
+		goto fail_apert;
 
 	dev->dev_private = drm;
 	drm->dev = dev;
@@ -444,6 +456,9 @@ fail_ttm:
 	nouveau_vga_fini(drm);
 fail_device:
 	nouveau_cli_destroy(&drm->client);
+fail_apert:
+	kfree(dev->apertures);
+	dev->apertures = NULL;
 	return ret;
 }
 
