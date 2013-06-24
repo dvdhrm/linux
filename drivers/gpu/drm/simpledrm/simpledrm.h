@@ -46,6 +46,9 @@ struct sdrm_device {
 	struct drm_encoder enc;
 	struct drm_connector conn;
 	struct drm_display_mode *mode;
+
+	/* fbdev */
+	struct fb_info *fbdev;
 };
 
 int sdrm_drm_load(struct drm_device *ddev, unsigned long flags);
@@ -85,5 +88,24 @@ struct sdrm_framebuffer {
 };
 
 #define to_sdrm_fb(x) container_of(x, struct sdrm_framebuffer, base)
+
+/* simpledrm fbdev helpers */
+
+#ifdef CONFIG_DRM_SIMPLEDRM_FBDEV
+
+void sdrm_fbdev_init(struct sdrm_device *sdrm);
+void sdrm_fbdev_cleanup(struct sdrm_device *sdrm);
+
+#else /* CONFIG_DRM_SIMPLEDRM_FBDEV */
+
+static inline void sdrm_fbdev_init(struct sdrm_device *sdrm)
+{
+}
+
+static inline void sdrm_fbdev_cleanup(struct sdrm_device *sdrm)
+{
+}
+
+#endif /* CONFIG_DRM_SIMPLEDRM_FBDEV */
 
 #endif /* SDRM_DRV_H */

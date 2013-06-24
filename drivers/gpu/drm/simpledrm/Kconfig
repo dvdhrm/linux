@@ -12,7 +12,18 @@ config DRM_SIMPLEDRM
 	  SimpleDRM supports "simple-framebuffer" DeviceTree objects and
 	  compatible platform framebuffers.
 
+	  If fbdev support is enabled, this driver will also provide an fbdev
+	  compatibility layer.
+
 	  If unsure, say Y.
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called simpledrm.
+
+config DRM_SIMPLEDRM_FBDEV
+	bool
+	depends on DRM_SIMPLEDRM && FB
+	default y
+	select FB_CFB_FILLRECT
+	select FB_CFB_COPYAREA
+	select FB_CFB_IMAGEBLIT

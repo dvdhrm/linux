@@ -303,6 +303,7 @@ int sdrm_drm_load(struct drm_device *ddev, unsigned long flags)
 	if (ret)
 		goto err_cleanup;
 
+	sdrm_fbdev_init(sdrm);
 	return 0;
 
 err_cleanup:
@@ -320,6 +321,7 @@ int sdrm_drm_unload(struct drm_device *ddev)
 {
 	struct sdrm_device *sdrm = ddev->dev_private;
 
+	sdrm_fbdev_cleanup(sdrm);
 	drm_mode_config_cleanup(ddev);
 	sdrm_pdev_destroy(sdrm);
 	kfree(sdrm);
