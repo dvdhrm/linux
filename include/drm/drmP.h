@@ -46,6 +46,7 @@
 #include <linux/miscdevice.h>
 #include <linux/fs.h>
 #include <linux/init.h>
+#include <linux/fb.h>
 #include <linux/file.h>
 #include <linux/platform_device.h>
 #include <linux/pci.h>
@@ -146,6 +147,7 @@ int drm_err(const char *func, const char *format, ...);
 #define DRIVER_MODESET     0x2000
 #define DRIVER_PRIME       0x4000
 #define DRIVER_RENDER      0x8000
+#define DRIVER_FIRMWARE    0x10000
 
 #define DRIVER_BUS_PCI 0x1
 #define DRIVER_BUS_PLATFORM 0x2
@@ -966,6 +968,23 @@ struct drm_driver {
 			    struct drm_device *dev,
 			    uint32_t handle);
 
+	/**
+	 * kick_out_firmware - kick out firmware driver
+	 * @dev: DRM device
+	 *
+	 * Iff this driver has DRIVER_FIRMWARE set, this function is called
+	 * when a real hw-driver is loaded and claims the framebuffer memory
+	 * that is mapped by the firmware driver. This is called with the
+	 * global drm mutex held.
+	 * Drivers should unmap any memory-mappings, disable the device and
+	 * schedule a driver removal.
+	 *
+	 * Note that a driver setting DRIVER_FIRMWARE is supposed to also set
+	 * the "apertures" information on @dev. It is used to match the memory
+	 * regions that are used by firmware drivers.
+	 */
+	void (*kick_out_firmware) (struct drm_device *dev);
+
 	/* Driver private ops for this object */
 	const struct vm_operations_struct *gem_vm_ops;
 
@@ -1087,6 +1106,7 @@ struct drm_pending_vblank_event {
  */
 struct drm_device {
 	struct list_head driver_item;	/**< list of devices per driver */
+	struct list_head global_item;	/**< global list of devices */
 	char *devname;			/**< For /proc/interrupts */
 	int if_version;			/**< Highest interface version set */
 
@@ -1218,6 +1238,8 @@ struct drm_device {
 	int switch_power_state;
 
 	atomic_t unplugged; /* device has been unplugged or gone away */
+	struct apertures_struct *apertures;	/**< fbmem apertures */
+	bool apert_boot;			/**< true if mapped as boot fb */
 };
 
 #define DRM_SWITCH_POWER_ON 0
@@ -1457,6 +1479,10 @@ extern void drm_master_put(struct drm_master **master);
 extern void drm_put_dev(struct drm_device *dev);
 extern int drm_put_minor(struct drm_minor **minor);
 extern void drm_unplug_dev(struct drm_device *dev);
+extern void drm_unplug_dev_locked(struct drm_device *dev);
+extern void drm_kick_out_firmware(struct apertures_struct *ap, bool boot);
+extern bool drm_is_firmware_used(struct apertures_struct *ap);
+extern struct list_head drm_devlist;
 extern unsigned int drm_debug;
 extern unsigned int drm_rnodes;
 

@@ -49,6 +49,10 @@ EXPORT_SYMBOL(drm_vblank_offdelay);
 unsigned int drm_timestamp_precision = 20;  /* Default to 20 usecs. */
 EXPORT_SYMBOL(drm_timestamp_precision);
 
+static bool drm_fw_invalid;	/* true if fw FBs have been destroyed */
+LIST_HEAD(drm_devlist);		/* device list; protected by global lock */
+EXPORT_SYMBOL(drm_devlist);
+
 /*
  * Default to use monotonic timestamps for wait-for-vblank and page-flip
  * complete events.
@@ -459,7 +463,9 @@ void drm_put_dev(struct drm_device *dev)
 
 	drm_put_minor(&dev->primary);
 
+	list_del(&dev->global_item);
 	list_del(&dev->driver_item);
+	kfree(dev->apertures);
 	kfree(dev->devname);
 	kfree(dev);
 }
@@ -484,3 +490,115 @@ void drm_unplug_dev(struct drm_device *dev)
 	mutex_unlock(&drm_global_mutex);
 }
 EXPORT_SYMBOL(drm_unplug_dev);
+
+void drm_unplug_dev_locked(struct drm_device *dev)
+{
+	/* for a USB device */
+	if (drm_core_check_feature(dev, DRIVER_MODESET))
+		drm_unplug_minor(dev->control);
+	drm_unplug_minor(dev->primary);
+
+	drm_device_set_unplugged(dev);
+
+	/* TODO: schedule drm_put_dev if open_count == 0 */
+}
+EXPORT_SYMBOL(drm_unplug_dev_locked);
+
+#define VGA_FB_PHYS 0xa0000
+
+static bool apertures_overlap(struct drm_device *dev,
+			      struct apertures_struct *ap,
+			      bool boot)
+{
+	unsigned int i, j;
+	struct aperture *a, *b;
+
+	if (!dev->apertures)
+		return false;
+
+	for (i = 0; i < dev->apertures->count; ++i) {
+		a = &dev->apertures->ranges[i];
+
+		if (boot && a->base == VGA_FB_PHYS)
+			return true;
+
+		for (j = 0; ap && j < ap->count; ++j) {
+			b = &ap->ranges[j];
+			if (a->base <= b->base && a->base + a->size > b->base)
+				return true;
+			if (b->base <= a->base && b->base + b->size > a->base)
+				return true;
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Kick out firmware
+ *
+ * Virtually unplug any firmware graphics devices which overlap the given
+ * region. This must be called with the global-drm-mutex locked.
+ * This calls the kick_out_firmware() callback on any firmware DRM driver and
+ * after that remove_conflicting_framebuffers() to remove legacy fbdev
+ * framebuffers.
+ */
+void drm_kick_out_firmware(struct apertures_struct *ap, bool boot)
+{
+	struct drm_device *dev;
+
+	if (boot)
+		drm_fw_invalid = true;
+
+	list_for_each_entry(dev, &drm_devlist, global_item) {
+		if (!drm_core_check_feature(dev, DRIVER_FIRMWARE))
+			continue;
+		if (apertures_overlap(dev, ap, boot)) {
+			DRM_INFO("kicking out firmware %s\n",
+				 dev->devname);
+			dev->driver->kick_out_firmware(dev);
+		}
+	}
+
+#ifdef CONFIG_FB
+	remove_conflicting_framebuffers(ap, "DRM", boot);
+#endif
+}
+EXPORT_SYMBOL(drm_kick_out_firmware);
+
+/**
+ * Verify that no driver uses firmware FBs
+ *
+ * Whenever you register a firmware framebuffer driver, you should store the
+ * apertures in @ap and test whether any other registered driver already
+ * claimed this area. Hence, if this function returns true, you should _not_
+ * register your driver!
+ */
+bool drm_is_firmware_used(struct apertures_struct *ap)
+{
+	struct drm_device *dev;
+	unsigned int i;
+	bool boot = false;
+
+	/* If a real DRM driver was loaded once, we cannot assume that the
+	 * firmware framebuffers are still valid. */
+	if (drm_fw_invalid)
+		return true;
+
+	for (i = 0; ap && i < ap->count; ++i) {
+		if (ap->ranges[i].base == VGA_FB_PHYS) {
+			boot = true;
+			break;
+		}
+	}
+
+	list_for_each_entry(dev, &drm_devlist, global_item) {
+		if (dev->apert_boot && boot)
+			return true;
+		if (apertures_overlap(dev, ap, false))
+			return true;
+	}
+
+	return false;
+}
+EXPORT_SYMBOL(drm_is_firmware_used);

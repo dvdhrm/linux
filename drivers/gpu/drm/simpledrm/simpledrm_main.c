@@ -267,6 +267,21 @@ int sdrm_drm_load(struct drm_device *ddev, unsigned long flags)
 	if (ret)
 		goto err_name;
 
+	ddev->apertures = alloc_apertures(1);
+	if (!ddev->apertures) {
+		ret = -ENOMEM;
+		goto err_pdev;
+	}
+
+	ddev->apertures->ranges[0].base = sdrm->fb_base;
+	ddev->apertures->ranges[0].size = sdrm->fb_size;
+
+	if (drm_is_firmware_used(ddev->apertures)) {
+		dev_info(ddev->dev, "firmware framebuffer is already in use\n");
+		ret = -EBUSY;
+		goto err_apert;
+	}
+
 	drm_mode_config_init(ddev);
 	ddev->mode_config.min_width = 0;
 	ddev->mode_config.min_height = 0;
@@ -308,6 +323,9 @@ int sdrm_drm_load(struct drm_device *ddev, unsigned long flags)
 
 err_cleanup:
 	drm_mode_config_cleanup(ddev);
+err_apert:
+	kfree(ddev->apertures);
+err_pdev:
 	sdrm_pdev_destroy(sdrm);
 err_name:
 	kfree(ddev->devname);
@@ -327,4 +345,19 @@ int sdrm_drm_unload(struct drm_device *ddev)
 	kfree(sdrm);
 
 	return 0;
+}
+
+void sdrm_drm_kick_out_firmware(struct drm_device *ddev)
+{
+	struct sdrm_device *sdrm = ddev->dev_private;
+
+	mutex_lock(&ddev->struct_mutex);
+
+	sdrm_fbdev_cleanup(sdrm);
+	drm_unplug_dev_locked(ddev);
+	if (sdrm->fb_obj)
+		sdrm_gem_unmap_object(sdrm->fb_obj);
+	sdrm_pdev_destroy(sdrm);
+
+	mutex_unlock(&ddev->struct_mutex);
 }

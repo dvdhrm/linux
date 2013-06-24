@@ -33,9 +33,10 @@ static const struct file_operations sdrm_drm_fops = {
 };
 
 static struct drm_driver sdrm_drm_driver = {
-	.driver_features = DRIVER_MODESET | DRIVER_GEM,
+	.driver_features = DRIVER_MODESET | DRIVER_GEM | DRIVER_FIRMWARE,
 	.load = sdrm_drm_load,
 	.unload = sdrm_drm_unload,
+	.kick_out_firmware = sdrm_drm_kick_out_firmware,
 	.fops = &sdrm_drm_fops,
 
 	.gem_init_object = sdrm_gem_init_object,

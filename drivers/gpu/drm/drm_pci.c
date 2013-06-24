@@ -378,6 +378,7 @@ int drm_get_pci_dev(struct pci_dev *pdev, const struct pci_device_id *ent,
 	}
 
 	list_add_tail(&dev->driver_item, &driver->device_list);
+	list_add_tail(&dev->global_item, &drm_devlist);
 
 	DRM_INFO("Initialized %s %d.%d.%d %s for %s on minor %d\n",
 		 driver->name, driver->major, driver->minor, driver->patchlevel,

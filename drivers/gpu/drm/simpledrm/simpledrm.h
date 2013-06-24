@@ -53,6 +53,7 @@ struct sdrm_device {
 
 int sdrm_drm_load(struct drm_device *ddev, unsigned long flags);
 int sdrm_drm_unload(struct drm_device *ddev);
+void sdrm_drm_kick_out_firmware(struct drm_device *ddev);
 int sdrm_drm_mmap(struct file *filp, struct vm_area_struct *vma);
 int sdrm_pdev_init(struct sdrm_device *sdrm);
 void sdrm_pdev_destroy(struct sdrm_device *sdrm);

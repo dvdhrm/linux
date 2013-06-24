@@ -56,6 +56,7 @@ int drm_get_usb_dev(struct usb_interface *interface,
 		goto err_g3;
 
 	list_add_tail(&dev->driver_item, &driver->device_list);
+	list_add_tail(&dev->global_item, &drm_devlist);
 
 	mutex_unlock(&drm_global_mutex);
 
