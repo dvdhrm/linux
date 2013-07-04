@@ -1414,9 +1414,9 @@ static void i915_kick_out_firmware_fb(struct drm_i915_private *dev_priv)
 	primary =
 		pdev->resource[PCI_ROM_RESOURCE].flags & IORESOURCE_ROM_SHADOW;
 
-	remove_conflicting_framebuffers(ap, "inteldrmfb", primary);
-
-	kfree(ap);
+	drm_kick_out_firmware(ap, primary);
+	dev_priv->dev->apertures = ap;
+	dev_priv->dev->apert_boot = primary;
 }
 
 static void i915_dump_device_info(struct drm_i915_private *dev_priv)
