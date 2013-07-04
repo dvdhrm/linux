@@ -62,6 +62,30 @@ done_free:
 	return 0;
 }
 
+static int radeon_kick_out_firmware(struct drm_device *dev)
+{
+	struct pci_dev *pdev = dev->pdev;
+	struct apertures_struct *ap;
+	bool primary = false;
+
+	ap = alloc_apertures(1);
+	if (!ap)
+		return -ENOMEM;
+
+	ap->ranges[0].base = pci_resource_start(pdev, 0);
+	ap->ranges[0].size = pci_resource_len(pdev, 0);
+
+#ifdef CONFIG_X86
+	primary = pdev->resource[PCI_ROM_RESOURCE].flags & IORESOURCE_ROM_SHADOW;
+#endif
+
+	drm_kick_out_firmware(ap, primary);
+	dev->apertures = ap;
+	dev->apert_boot = primary;
+
+	return 0;
+}
+
 /**
  * radeon_driver_load_kms - Main load function for KMS.
  *
@@ -85,6 +109,12 @@ int radeon_driver_load_kms(struct drm_device *dev, unsigned long flags)
 		return -ENOMEM;
 	}
 	dev->dev_private = (void *)rdev;
+
+	r = radeon_kick_out_firmware(dev);
+	if (r) {
+		kfree(rdev);
+		return r;
+	}
 
 	/* update BUS flag */
 	if (drm_pci_device_is_agp(dev)) {
