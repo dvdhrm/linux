@@ -84,8 +84,6 @@ int drm_open(struct inode *inode, struct file *filp)
 	struct drm_minor *minor;
 	int retcode = 0;
 	int need_setup = 0;
-	struct address_space *old_mapping;
-	struct address_space *old_imapping;
 
 	minor = idr_find(&drm_minors_idr, minor_id);
 	if (!minor)
@@ -99,16 +97,9 @@ int drm_open(struct inode *inode, struct file *filp)
 
 	if (!dev->open_count++)
 		need_setup = 1;
-	mutex_lock(&dev->struct_mutex);
-	old_imapping = inode->i_mapping;
-	old_mapping = dev->dev_mapping;
-	if (old_mapping == NULL)
-		dev->dev_mapping = &inode->i_data;
-	/* ihold ensures nobody can remove inode with our i_data */
-	ihold(container_of(dev->dev_mapping, struct inode, i_data));
-	inode->i_mapping = dev->dev_mapping;
-	filp->f_mapping = dev->dev_mapping;
-	mutex_unlock(&dev->struct_mutex);
+
+	/* set address_space for shared mappings */
+	filp->f_mapping = dev->anon_inode->i_mapping;
 
 	retcode = drm_open_helper(inode, filp, dev);
 	if (retcode)
@@ -122,12 +113,6 @@ int drm_open(struct inode *inode, struct file *filp)
 	return 0;
 
 err_undo:
-	mutex_lock(&dev->struct_mutex);
-	filp->f_mapping = old_imapping;
-	inode->i_mapping = old_imapping;
-	iput(container_of(dev->dev_mapping, struct inode, i_data));
-	dev->dev_mapping = old_mapping;
-	mutex_unlock(&dev->struct_mutex);
 	dev->open_count--;
 	return retcode;
 }
@@ -472,9 +457,6 @@ int drm_release(struct inode *inode, struct file *filp)
 			drm_master_put(&file_priv->minor->master);
 		}
 	}
-
-	BUG_ON(dev->dev_mapping == NULL);
-	iput(container_of(dev->dev_mapping, struct inode, i_data));
 
 	/* drop the reference held my the file priv */
 	if (file_priv->master)

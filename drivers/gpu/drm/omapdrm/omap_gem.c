@@ -153,7 +153,7 @@ static struct {
 static void evict_entry(struct drm_gem_object *obj,
 		enum tiler_fmt fmt, struct usergart_entry *entry)
 {
-	if (obj->dev->dev_mapping) {
+	if (obj->dev->anon_inode->i_mapping) {
 		struct omap_gem_object *omap_obj = to_omap_bo(obj);
 		int n = usergart[fmt].height;
 		size_t size = PAGE_SIZE * n;
@@ -164,12 +164,13 @@ static void evict_entry(struct drm_gem_object *obj,
 			int i;
 			/* if stride > than PAGE_SIZE then sparse mapping: */
 			for (i = n; i > 0; i--) {
-				unmap_mapping_range(obj->dev->dev_mapping,
+				unmap_mapping_range(obj->dev->anon_inode->i_mapping,
 						off, PAGE_SIZE, 1);
 				off += PAGE_SIZE * m;
 			}
 		} else {
-			unmap_mapping_range(obj->dev->dev_mapping, off, size, 1);
+			unmap_mapping_range(obj->dev->anon_inode->i_mapping,
+					    off, size, 1);
 		}
 	}
 

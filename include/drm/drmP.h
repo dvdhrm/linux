@@ -1197,7 +1197,7 @@ struct drm_device {
 	unsigned int num_crtcs;                  /**< Number of CRTCs on this device */
 	void *dev_private;		/**< device private data */
 	void *mm_private;
-	struct address_space *dev_mapping;
+	struct inode *anon_inode;
 	struct drm_sigdata sigdata;	   /**< For block_all_signals */
 	sigset_t sigmask;
 

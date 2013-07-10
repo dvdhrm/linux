@@ -31,6 +31,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+#include <linux/anon_inodes.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/slab.h>
@@ -271,8 +272,14 @@ int drm_fill_in_dev(struct drm_device *dev,
 	mutex_init(&dev->struct_mutex);
 	mutex_init(&dev->ctxlist_mutex);
 
+	/* create private address_space on anon inode */
+	dev->anon_inode = anon_inode_new();
+	if (IS_ERR(dev->anon_inode))
+		return PTR_ERR(dev->anon_inode);
+
 	if (drm_ht_create(&dev->map_hash, 12)) {
-		return -ENOMEM;
+		retcode = -ENOMEM;
+		goto err_inode;
 	}
 
 	/* the DRM has 6 basic counters */
@@ -307,6 +314,8 @@ int drm_fill_in_dev(struct drm_device *dev,
 
       error_out_unreg:
 	drm_lastclose(dev);
+err_inode:
+	iput(dev->anon_inode);
 	return retcode;
 }
 EXPORT_SYMBOL(drm_fill_in_dev);
@@ -459,6 +468,7 @@ void drm_put_dev(struct drm_device *dev)
 
 	drm_put_minor(&dev->primary);
 
+	iput(dev->anon_inode);
 	list_del(&dev->driver_item);
 	kfree(dev->devname);
 	kfree(dev);
