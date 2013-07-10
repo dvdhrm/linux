@@ -25,6 +25,7 @@
 static struct vfsmount *anon_inode_mnt __read_mostly;
 static struct inode *anon_inode_inode;
 static const struct file_operations anon_inode_fops;
+static struct dentry *anon_inode_root;
 
 /*
  * anon_inodefs_dname() is called from d_path().
@@ -87,19 +88,18 @@ static struct inode *anon_inode_mkinode(struct super_block *s)
 static struct dentry *anon_inodefs_mount(struct file_system_type *fs_type,
 				int flags, const char *dev_name, void *data)
 {
-	struct dentry *root;
-	root = mount_pseudo(fs_type, "anon_inode:", NULL,
+	anon_inode_root = mount_pseudo(fs_type, "anon_inode:", NULL,
 			&anon_inodefs_dentry_operations, ANON_INODE_FS_MAGIC);
-	if (!IS_ERR(root)) {
-		struct super_block *s = root->d_sb;
+	if (!IS_ERR(anon_inode_root)) {
+		struct super_block *s = anon_inode_root->d_sb;
 		anon_inode_inode = anon_inode_mkinode(s);
 		if (IS_ERR(anon_inode_inode)) {
-			dput(root);
+			dput(anon_inode_root);
 			deactivate_locked_super(s);
-			root = ERR_CAST(anon_inode_inode);
+			anon_inode_root = ERR_CAST(anon_inode_inode);
 		}
 	}
-	return root;
+	return anon_inode_root;
 }
 
 static struct file_system_type anon_inode_fs_type = {
@@ -218,6 +218,28 @@ err_put_unused_fd:
 	return error;
 }
 EXPORT_SYMBOL_GPL(anon_inode_getfd);
+
+/**
+ * anon_inode_new - create private anonymous inode
+ *
+ * Creates a new inode on the anonymous inode FS for driver's use. The inode has
+ * it's own address_space compared to the shared anon_inode_inode. It can be
+ * used in situations where user-space mappings have to be shared across
+ * different files but no backing inode is available.
+ *
+ * Call iput(inode) to release the inode.
+ *
+ * RETURNS:
+ * New inode on success, error pointer on failure.
+ */
+struct inode *anon_inode_new(void)
+{
+	if (IS_ERR(anon_inode_root))
+		return ERR_CAST(anon_inode_root);
+
+	return anon_inode_mkinode(anon_inode_root->d_sb);
+}
+EXPORT_SYMBOL_GPL(anon_inode_new);
 
 static int __init anon_inode_init(void)
 {
