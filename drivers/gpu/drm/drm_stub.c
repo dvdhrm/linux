@@ -1,13 +1,4 @@
-/**
- * \file drm_stub.h
- * Stub support
- *
- * \author Rickard E. (Rik) Faith <faith@valinux.com>
- */
-
 /*
- * Created: Fri Jan 19 10:48:35 2001 by faith@acm.org
- *
  * Copyright 2001 VA Linux Systems, Inc., Sunnyvale, California.
  * All Rights Reserved.
  *
@@ -29,6 +20,45 @@
  * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE.
+ *
+ * Authors:
+ *      Rickard E. (Rik) Faith <faith@valinux.com>
+ */
+
+/**
+ * DOC: device management
+ *
+ * DRM core provides basic device management and defines the lifetime. A bus
+ * driver is responsible of finding suitable devices and reacting to hotplug
+ * events. The normal device-core operations are available for DRM devices:
+ * drm_dev_alloc() allocates a new device which can be freed via drm_dev_free().
+ * This device is not advertised to user-space and is not considered active
+ * until you call drm_dev_register(). This call will start the DRM device and
+ * notify user-space about it. Once a device is registered, any device callbacks
+ * are considered active and may be entered.
+ *
+ * For platform drivers, this is all you need to do. For hotpluggable drivers, a
+ * bus needs to listen for unplug events. Once a device is unplugged, use
+ * drm_dev_unregister() to deactivate the device, interrupt all pending
+ * user-space processes waiting for the device and mark the device as gone. Once
+ * the device is unregistered, DRM core will take care of freeing it so you must
+ * not access it afterwards.
+ *
+ * DRM core tracks device usage via drm_dev_get_active() and
+ * drm_dev_put_active(). Every user-space entry point must mark a device as
+ * active as long as it is used. The DRM-core helpers do this automatically, but
+ * if a driver provides their own file-ops, they must take care of this. DRM
+ * core guarantees that drm_dev_unregister() will not be called as long as the
+ * device is active. But if you don't mark the device as active, it may get
+ * unregistered (and even freed!) at any time.
+ *
+ * Drivers must use the ->load() and ->unload() callbacks to allocate/free
+ * private device resources. DRM core does not provide device ref-counting as
+ * this isn't needed for now. Instead, drivers must assume a device is gone once
+ * ->unload() was called. Internally, a device is kept alive until
+ * drm_dev_unregister() is called. It is kept allocated until
+ * drm_dev_unregister() is called _and_ the last user-space process closed the
+ * last node of the device.
  */
 
 #include <linux/module.h>
@@ -333,6 +363,9 @@ int drm_put_minor(struct drm_minor **minor_p)
 {
 	struct drm_minor *minor = *minor_p;
 
+	if (!minor)
+		return 0;
+
 	DRM_DEBUG("release secondary minor %d\n", minor->index);
 
 #if defined(CONFIG_DEBUG_FS)
@@ -351,7 +384,8 @@ EXPORT_SYMBOL(drm_put_minor);
 
 static void drm_unplug_minor(struct drm_minor *minor)
 {
-	drm_sysfs_device_remove(minor);
+	if (minor)
+		drm_sysfs_device_remove(minor);
 }
 
 /**
@@ -363,35 +397,20 @@ static void drm_unplug_minor(struct drm_minor *minor)
  */
 void drm_put_dev(struct drm_device *dev)
 {
-	DRM_DEBUG("\n");
-
-	if (!dev) {
-		DRM_ERROR("cleanup called no dev\n");
-		return;
-	}
-
 	drm_dev_unregister(dev);
-	drm_dev_free(dev);
 }
 EXPORT_SYMBOL(drm_put_dev);
 
+/**
+ * drm_unplug_dev() - Unplug DRM device
+ * @dev: Device to unplug
+ *
+ * Virtually unplug DRM device, mark it as invalid and wait for any pending
+ * user-space actions. @dev might be freed after this returns.
+ */
 void drm_unplug_dev(struct drm_device *dev)
 {
-	/* for a USB device */
-	if (drm_core_check_feature(dev, DRIVER_MODESET))
-		drm_unplug_minor(dev->control);
-	if (dev->render)
-		drm_unplug_minor(dev->render);
-	drm_unplug_minor(dev->primary);
-
-	mutex_lock(&drm_global_mutex);
-
-	drm_device_set_unplugged(dev);
-
-	if (dev->open_count == 0) {
-		drm_put_dev(dev);
-	}
-	mutex_unlock(&drm_global_mutex);
+	drm_dev_unregister(dev);
 }
 EXPORT_SYMBOL(drm_unplug_dev);
 
@@ -481,6 +500,9 @@ EXPORT_SYMBOL(drm_dev_alloc);
  */
 void drm_dev_free(struct drm_device *dev)
 {
+	drm_put_minor(&dev->control);
+	drm_put_minor(&dev->primary);
+
 	if (dev->driver->driver_features & DRIVER_GEM)
 		drm_gem_destroy(dev);
 
@@ -580,10 +602,21 @@ EXPORT_SYMBOL(drm_dev_register);
  * Mark DRM device as unplugged, wait for any pending user request and then
  * unregister the DRM device from the system. This does the reverse of
  * drm_dev_register().
+ *
+ * If there is no pending open-file, this also frees the DRM device by calling
+ * drm_dev_free(). Otherwise, it leaves the device allocated and the last real
+ * ->release() callback will free the device.
  */
 void drm_dev_unregister(struct drm_device *dev)
 {
 	struct drm_map_list *r_list, *list_temp;
+	struct drm_file *file;
+
+	/* Take fake open_count to prevent concurrent drm_release() calls from
+	 * freeing the device. */
+	mutex_lock(&drm_global_mutex);
+	++dev->open_count;
+	mutex_unlock(&drm_global_mutex);
 
 	/* Wait for pending users and then mark the device as unplugged. We
 	 * must not hold the global-mutex while doing this. Otherwise, calls
@@ -591,6 +624,26 @@ void drm_dev_unregister(struct drm_device *dev)
 	percpu_down_write(&dev->active);
 	dev->unplugged = true;
 	percpu_up_write(&dev->active);
+
+	mutex_lock(&drm_global_mutex);
+
+	/* By setting "unplugged" we guarantee that no new drm_open will
+	 * succeed. We also know, that no user-space process can call into a DRM
+	 * device, anymore. So instead of waiting for the last close() we
+	 * simulate close() for all active users.
+	 * This allows us to unregister the device immediately but wait for the
+	 * last real release to free it actually. */
+	while (!list_empty(&dev->filelist)) {
+		file = list_entry(dev->filelist.next, struct drm_file, lhead);
+
+		/* wake up pending tasks in drm_read() */
+		wake_up_interruptible(&file->event_wait);
+		drm_close(file->filp);
+	}
+
+	/* zap all memory mappings */
+	if (dev->dev_mapping)
+		unmap_mapping_range(dev->dev_mapping, 0, ULLONG_MAX, 1);
 
 	drm_lastclose(dev);
 
@@ -605,13 +658,21 @@ void drm_dev_unregister(struct drm_device *dev)
 	list_for_each_entry_safe(r_list, list_temp, &dev->maplist, head)
 		drm_rmmap(dev, r_list->map);
 
-	if (dev->control)
-		drm_put_minor(&dev->control);
-	if (dev->render)
-		drm_put_minor(&dev->render);
-	drm_put_minor(&dev->primary);
+	/* Only unplug minors, do not free them. Following drm_open() calls
+	 * access file_priv->minor->dev to see whether the device is still
+	 * active so keep it around. drm_dev_free() frees them eventually. */
+	drm_unplug_minor(dev->control);
+	drm_unplug_minor(dev->render);
+	drm_unplug_minor(dev->primary);
 
 	list_del(&dev->driver_item);
+
+	/* Release our fake open_count. If there are no pending open-files,
+	 * free the device directly. */
+	if (!--dev->open_count)
+		drm_dev_free(dev);
+
+	mutex_unlock(&drm_global_mutex);
 }
 EXPORT_SYMBOL(drm_dev_unregister);
 

@@ -1240,15 +1240,8 @@ static inline int drm_dev_to_irq(struct drm_device *dev)
 	return dev->driver->bus->get_irq(dev);
 }
 
-static inline void drm_device_set_unplugged(struct drm_device *dev)
-{
-	smp_wmb();
-	dev->unplugged = true;
-}
-
 static inline int drm_device_is_unplugged(struct drm_device *dev)
 {
-	smp_rmb();
 	return dev->unplugged;
 }
 
@@ -1280,6 +1273,7 @@ extern int drm_stub_open(struct inode *inode, struct file *filp);
 extern ssize_t drm_read(struct file *filp, char __user *buffer,
 			size_t count, loff_t *offset);
 extern int drm_release(struct inode *inode, struct file *filp);
+extern void drm_close(struct file *filp);
 
 				/* Mapping support (drm_vm.h) */
 extern int drm_mmap(struct file *filp, struct vm_area_struct *vma);

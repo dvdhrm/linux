@@ -457,33 +457,29 @@ int drm_lastclose(struct drm_device * dev)
 }
 
 /**
- * Release file.
+ * drm_close() - Close file
+ * @filp: Open file to close
  *
- * \param inode device inode
- * \param file_priv DRM file private.
- * \return zero on success or a negative number on failure.
+ * Close all open handles and clean up all resources associated with this open
+ * file. The open-file must not be used after this call returns.
  *
- * If the hardware lock is held then free it, and take it again for the kernel
- * context since it's necessary to reclaim buffers. Unlink the file private
- * data from its list and free it. Decreases the open count and if it reaches
- * zero calls drm_lastclose().
+ * This does not actually free "file_priv" or "file_priv->minor" so following
+ * user-space entries can still test for file_priv->minor->dev and see whether
+ * it is valid.
+ *
+ * You should free "file_priv" in the real file ->release() callback.
+ *
+ * Caller must hold the global DRM mutex.
  */
-int drm_release(struct inode *inode, struct file *filp)
+void drm_close(struct file *filp)
 {
 	struct drm_file *file_priv = filp->private_data;
 	struct drm_device *dev = file_priv->minor->dev;
-	int retcode = 0;
-
-	mutex_lock(&drm_global_mutex);
 
 	DRM_DEBUG("open_count = %d\n", dev->open_count);
 
 	if (dev->driver->preclose)
 		dev->driver->preclose(dev, file_priv);
-
-	/* ========================================================
-	 * Begin inline drm_release
-	 */
 
 	DRM_DEBUG("pid = %d, device = 0x%lx, open_count = %d\n",
 		  task_pid_nr(current),
@@ -562,26 +558,57 @@ int drm_release(struct inode *inode, struct file *filp)
 		drm_prime_destroy_file_private(&file_priv->prime);
 
 	put_pid(file_priv->pid);
+}
+EXPORT_SYMBOL(drm_close);
+
+/**
+ * drm_release - Release file
+ * @inode: Inode of DRM device node
+ * @filp: Open file to close
+ *
+ * Release callback which should be used for DRM device file-ops. Calls
+ * drm_close() for @filp and releases the DRM device if is is unplugged and we
+ * are the last user.
+ *
+ * RETURNS:
+ * This always returns 0.
+ */
+int drm_release(struct inode *inode, struct file *filp)
+{
+	struct drm_file *file_priv = filp->private_data;
+	struct drm_device *dev = file_priv->minor->dev;
+	bool active;
+
+	mutex_lock(&drm_global_mutex);
+
+	/* If the device is still active, our context is valid and we need to
+	 * close it properly. If it is not active, drm_dev_unregister() will
+	 * have called drm_close() for us already (protected by
+	 * drm_global_mutex). So skip it in this case. */
+	active = drm_dev_get_active(dev);
+
+	if (active)
+		drm_close(filp);
 	kfree(file_priv);
 
-	/* ========================================================
-	 * End inline drm_release
-	 */
-
+	/* If we are the last open-file and the device is still active,
+	 * call lastclose() and continue. If the device is unplugged,
+	 * then drm_dev_unregister() already called lastclose() and we
+	 * can finally free the device as we are the last user. */
 	atomic_inc(&dev->counts[_DRM_STAT_CLOSES]);
 	if (!--dev->open_count) {
-		if (atomic_read(&dev->ioctl_count)) {
-			DRM_ERROR("Device busy: %d\n",
-				  atomic_read(&dev->ioctl_count));
-			retcode = -EBUSY;
-		} else
-			retcode = drm_lastclose(dev);
-		if (drm_device_is_unplugged(dev))
-			drm_put_dev(dev);
+		if (active)
+			drm_lastclose(dev);
+		else
+			drm_dev_free(dev);
 	}
+
+	if (active)
+		drm_dev_put_active(dev);
+
 	mutex_unlock(&drm_global_mutex);
 
-	return retcode;
+	return 0;
 }
 EXPORT_SYMBOL(drm_release);
 
