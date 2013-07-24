@@ -440,8 +440,11 @@ struct drm_device *drm_dev_alloc(struct drm_driver *driver,
 	dev->types[4] = _DRM_STAT_LOCKS;
 	dev->types[5] = _DRM_STAT_UNLOCKS;
 
-	if (drm_ht_create(&dev->map_hash, 12))
+	if (percpu_init_rwsem(&dev->active))
 		goto err_free;
+
+	if (drm_ht_create(&dev->map_hash, 12))
+		goto err_rwsem;
 
 	drm_legacy_ctxbitmap_init(dev);
 
@@ -458,6 +461,8 @@ struct drm_device *drm_dev_alloc(struct drm_driver *driver,
 err_ctxbitmap:
 	drm_legacy_ctxbitmap_cleanup(dev);
 	drm_ht_remove(&dev->map_hash);
+err_rwsem:
+	percpu_free_rwsem(&dev->active);
 err_free:
 	kfree(dev);
 	return NULL;
@@ -482,6 +487,7 @@ void drm_dev_free(struct drm_device *dev)
 	drm_legacy_ctxbitmap_cleanup(dev);
 	drm_ht_remove(&dev->map_hash);
 
+	percpu_free_rwsem(&dev->active);
 	kfree(dev->devname);
 	kfree(dev);
 }
@@ -571,13 +577,20 @@ EXPORT_SYMBOL(drm_dev_register);
  * drm_dev_unregister - Unregister DRM device
  * @dev: Device to unregister
  *
- * Unregister the DRM device from the system. This does the reverse of
- * drm_dev_register() but does not deallocate the device. The caller must call
- * drm_dev_free() to free all resources.
+ * Mark DRM device as unplugged, wait for any pending user request and then
+ * unregister the DRM device from the system. This does the reverse of
+ * drm_dev_register().
  */
 void drm_dev_unregister(struct drm_device *dev)
 {
 	struct drm_map_list *r_list, *list_temp;
+
+	/* Wait for pending users and then mark the device as unplugged. We
+	 * must not hold the global-mutex while doing this. Otherwise, calls
+	 * like drm_ioctl() or drm_lock() will dead-lock. */
+	percpu_down_write(&dev->active);
+	dev->unplugged = true;
+	percpu_up_write(&dev->active);
 
 	drm_lastclose(dev);
 
@@ -601,3 +614,46 @@ void drm_dev_unregister(struct drm_device *dev)
 	list_del(&dev->driver_item);
 }
 EXPORT_SYMBOL(drm_dev_unregister);
+
+/**
+ * drm_dev_get_active - Mark device as active
+ * @dev: Device to mark
+ *
+ * Whenever a DRM driver performs an action on behalf of user-space, it should
+ * mark the DRM device as active. Once it is done, call drm_dev_put_active() to
+ * release that mark. This allows DRM core to wait for pending user-space
+ * actions before unplugging a device. But this also means, user-space must
+ * not sleep for an indefinite period while a device is marked active.
+ * If you have to sleep for an indefinite period, call drm_dev_put_active() and
+ * try to reacquire the device once you wake up.
+ *
+ * Recursive calls are not allowed! They will dead-lock!
+ *
+ * RETURNS:
+ * True iff the device was marked active and can be used. False if the device
+ * was unplugged and must not be used.
+ */
+bool drm_dev_get_active(struct drm_device *dev)
+{
+	percpu_down_read(&dev->active);
+	if (!dev->unplugged)
+		return true;
+	percpu_up_read(&dev->active);
+	return false;
+}
+EXPORT_SYMBOL(drm_dev_get_active);
+
+/**
+ * drm_dev_put_active - Unmark active device
+ * @dev: Active device to unmark
+ *
+ * This finished a call to drm_dev_get_active(). You must not call it if
+ * drm_dev_get_active() failed.
+ * This marks the device as inactive again, iff no other user currently has the
+ * device marked as active. See drm_dev_get_active().
+ */
+void drm_dev_put_active(struct drm_device *dev)
+{
+	percpu_up_read(&dev->active);
+}
+EXPORT_SYMBOL(drm_dev_put_active);

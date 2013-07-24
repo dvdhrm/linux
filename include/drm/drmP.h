@@ -1217,7 +1217,11 @@ struct drm_device {
 	/*@} */
 	int switch_power_state;
 
-	atomic_t unplugged; /* device has been unplugged or gone away */
+	/** \name Hotplug Management */
+	/*@{ */
+	struct percpu_rw_semaphore active;	/**< protect active users */
+	bool unplugged;				/**< device has been unplugged or gone away */
+	/*@} */
 };
 
 #define DRM_SWITCH_POWER_ON 0
@@ -1239,14 +1243,13 @@ static inline int drm_dev_to_irq(struct drm_device *dev)
 static inline void drm_device_set_unplugged(struct drm_device *dev)
 {
 	smp_wmb();
-	atomic_set(&dev->unplugged, 1);
+	dev->unplugged = true;
 }
 
 static inline int drm_device_is_unplugged(struct drm_device *dev)
 {
-	int ret = atomic_read(&dev->unplugged);
 	smp_rmb();
-	return ret;
+	return dev->unplugged;
 }
 
 static inline bool drm_modeset_is_locked(struct drm_device *dev)
@@ -1651,6 +1654,8 @@ struct drm_device *drm_dev_alloc(struct drm_driver *driver,
 void drm_dev_free(struct drm_device *dev);
 int drm_dev_register(struct drm_device *dev);
 void drm_dev_unregister(struct drm_device *dev);
+bool drm_dev_get_active(struct drm_device *dev);
+void drm_dev_put_active(struct drm_device *dev);
 int drm_get_minor(struct drm_device *dev, struct drm_minor **minor, int type);
 /*@}*/
 

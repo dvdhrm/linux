@@ -94,7 +94,7 @@ int drm_open(struct inode *inode, struct file *filp)
 	if (!(dev = minor->dev))
 		return -ENODEV;
 
-	if (drm_device_is_unplugged(dev))
+	if (!drm_dev_get_active(dev))
 		return -ENODEV;
 
 	if (!dev->open_count++)
@@ -119,7 +119,9 @@ int drm_open(struct inode *inode, struct file *filp)
 		if (retcode)
 			goto err_undo;
 	}
-	return 0;
+
+	retcode = 0;
+	goto out_active;
 
 err_undo:
 	mutex_lock(&dev->struct_mutex);
@@ -129,6 +131,8 @@ err_undo:
 	dev->dev_mapping = old_mapping;
 	mutex_unlock(&dev->struct_mutex);
 	dev->open_count--;
+out_active:
+	drm_dev_put_active(dev);
 	return retcode;
 }
 EXPORT_SYMBOL(drm_open);
@@ -158,9 +162,6 @@ int drm_stub_open(struct inode *inode, struct file *filp)
 		goto out;
 
 	if (!(dev = minor->dev))
-		goto out;
-
-	if (drm_device_is_unplugged(dev))
 		goto out;
 
 	old_fops = filp->f_op;
@@ -617,14 +618,24 @@ ssize_t drm_read(struct file *filp, char __user *buffer,
 		 size_t count, loff_t *offset)
 {
 	struct drm_file *file_priv = filp->private_data;
+	struct drm_device *dev = file_priv->minor->dev;
 	struct drm_pending_event *e;
 	size_t total;
 	ssize_t ret;
 
+	/* No locking needed around "unplugged" as we sleep during wait_event()
+	 * below, anyway. We acquire the active device after we woke up so we
+	 * never use unplugged devices. */
+	if (dev->unplugged)
+		return -ENODEV;
+
 	ret = wait_event_interruptible(file_priv->event_wait,
-				       !list_empty(&file_priv->event_list));
+				       !list_empty(&file_priv->event_list) ||
+				       dev->unplugged);
 	if (ret < 0)
 		return ret;
+	if (!drm_dev_get_active(dev))
+		return -ENODEV;
 
 	total = 0;
 	while (drm_dequeue_event(file_priv, total, count, &e)) {
@@ -638,6 +649,7 @@ ssize_t drm_read(struct file *filp, char __user *buffer,
 		e->destroy(e);
 	}
 
+	drm_dev_put_active(dev);
 	return total;
 }
 EXPORT_SYMBOL(drm_read);
@@ -645,7 +657,14 @@ EXPORT_SYMBOL(drm_read);
 unsigned int drm_poll(struct file *filp, struct poll_table_struct *wait)
 {
 	struct drm_file *file_priv = filp->private_data;
+	struct drm_device *dev = file_priv->minor->dev;
 	unsigned int mask = 0;
+
+	/* signal HUP on device removal */
+	if (!drm_dev_get_active(dev))
+		mask |= POLLHUP;
+	else
+		drm_dev_put_active(dev);
 
 	poll_wait(filp, &file_priv->event_wait, wait);
 
